@@ -10,31 +10,32 @@ import numpy as np
 import random
 from itertools import izip
 import scipy.io
+import ConfigParser
+import json
 from warnings import warn
+
 try:
     from scipy.special import gammaln, digamma
     from scipy.special import gdtrc         # required only for regression
     from scipy.optimize import fsolve       # required only for regression
     import scipy.stats
     from scipy.stats.stats import pearsonr
+
 except:
     print 'Error loading scipy modules; might cause error later'
-from copy import copy
+
 try:
     from sklearn import feature_selection
 except:
     print 'Error loading sklearn; might cause error later'
-try:
-    import matplotlib.pyplot as plt       # uncomment if you need to plot
-    from mpl_toolkits.mplot3d import Axes3D
-except:
-    print 'Error loading matplotlib; might cause error later'
+
 from utils import hist_count, logsumexp, softmax, sample_multinomial, \
         sample_multinomial_scores, empty, assert_no_nan, linear_regression, \
         check_if_zero, check_if_one, logsumexp_array
 
 
 class Forest(object):
+
     def __init__(self):
         pass
 
@@ -134,10 +135,10 @@ def parser_add_common_options():
             help='do you want to normalize features in 0-1 range? (0=False, 1=True) [default: %default]')
     parser.add_option('--select_features', dest='select_features', default=0, type='int',
             help='do you wish to apply feature selection? (1=True, 0=False) [default: %default]') 
-    parser.add_option('--optype', dest='optype', default='class',
+    parser.add_option('--optype', dest='optype', default='class', # Classification is Default
             help='nature of outputs in your dataset (class/real) '\
             'for (classification/regression)  [default: %default]')
-    parser.add_option('--data_path', dest='data_path', default='../../process_data/',
+    parser.add_option('--data_path', dest='data_path', default='../process_data/',  # Corrected Default Path
             help='path of the dataset [default: %default]')
     parser.add_option('--debug', dest='debug', default='0', type='int',
             help='debug or not? (0=False, 1=everything, 2=special stuff only) [default: %default]')
@@ -152,6 +153,9 @@ def parser_add_common_options():
             help='verbosity level (0 is minimum, 4 is maximum) [default: %default]')
     parser.add_option('--init_id', dest='init_id', default=1, type='int',
             help='init_id (changes random seed for multiple initializations) [default: %default]')
+    parser.add_option('--config', dest='config', default='../config.cfg',
+            help='path of the config file [default: %default]')
+
     return parser
 
 
@@ -180,6 +184,33 @@ def parser_add_mf_options(parser):
                     '(used only for optype=real) [default: %default]')
     parser.add_option_group(group)
     return parser
+
+
+def process_command_line():
+    parser = parser_add_common_options()
+    parser = parser_add_mf_options(parser)
+    settings, args = parser.parse_args()
+    add_stuff_2_settings(settings)
+    if settings.optype == 'class':
+        settings.alpha = 0    # normalized stable prior
+        assert settings.smooth_hierarchically
+    parser_check_common_options(parser, settings)
+    parser_check_mf_options(parser, settings)
+    if settings.budget < 0:
+        settings.budget_to_use = np.inf
+    else:
+        settings.budget_to_use = settings.budget
+    return settings
+
+
+def get_config():
+
+    settings = process_command_line()
+    config_file = settings.config
+    config = ConfigParser.RawConfigParser()
+    config.read(config_file)
+
+    return config
 
 
 def parser_check_common_options(parser, settings):
@@ -219,8 +250,12 @@ def reset_random_seed(settings):
 
 
 def check_dataset(settings):
-    classification_datasets = set(['satimage', 'usps', 'dna', 'dna-61-120', 'letter'])
-    regression_datasets = set(['housing', 'kin40k'])
+
+    # Read Datasets from config file
+    cfg = get_config()
+    classification = json.loads(cfg.get('classification', 'datasets'))
+    classification_datasets = set(classification)
+    regression_datasets = set(['housing', 'kin40k']) # Not adjusted, since focus on classification.
     special_cases = settings.dataset[:3] == 'toy' or settings.dataset[:4] == 'rsyn' \
             or settings.dataset[:8] == 'ctslices' or settings.dataset[:3] == 'msd' \
             or settings.dataset[:6] == 'houses' or settings.dataset[:9] == 'halfmoons' \
@@ -265,10 +300,12 @@ def load_data(settings):
         print 'Unknown dataset: ' + settings.dataset
         raise Exception
     assert(not data['is_sparse'])
+
     try:
+
         if settings.normalize_features == 1:
-            min_d = np.minimum(np.min(data['x_train'], 0), np.min(data['x_test'], 0))
-            max_d = np.maximum(np.max(data['x_train'], 0), np.max(data['x_test'], 0))
+
+            min_d, max_d = normalization_data(data['x_train'], data["x_test"])
             range_d = max_d - min_d
             idx_range_d_small = range_d <= 0.   # find columns where all features are identical
             if data['n_dim'] > 1:
@@ -279,6 +316,7 @@ def load_data(settings):
             data['x_train'] /= range_d
             data['x_test'] -= min_d + 0.
             data['x_test'] /= range_d
+
     except AttributeError:
         # backward compatibility with code without normalize_features argument
         pass
@@ -317,9 +355,7 @@ def load_data(settings):
             draw_mondrian = False
         if is_mondrianforest and (not draw_mondrian):
             reset_random_seed(settings)
-            np.random.shuffle(train_ids)
-            # NOTE: shuffle should be the first call after resetting random seed
-            #       all experiments would NOT use the same dataset otherwise
+
         train_ids_cumulative = np.arange(0)
         n_points_per_minibatch = data['n_train'] / n_minibatches
         assert n_points_per_minibatch > 0
@@ -335,7 +371,42 @@ def load_data(settings):
             data['train_ids_partition']['current'][idx_minibatch] = train_ids_current
             train_ids_cumulative = np.append(train_ids_cumulative, train_ids_current)
             data['train_ids_partition']['cumulative'][idx_minibatch] = train_ids_cumulative
+        #     print data['train_ids_partition']['current'][idx_minibatch]
+        # print data['train_ids_partition']['cumulative'][idx_minibatch]
+
     return data
+
+
+def normalization_data(train, test):
+
+    # Amount of Data serving as normalization basis.
+    # Percentage related to all data specified in the config.
+
+    cfg = get_config()
+    normalization = float(json.loads(cfg.get('classification', 'normalization')))
+
+    # Specify data basis
+    train_size = len(train)*normalization
+    test_size = len(test)*normalization
+
+    # Calculate min and max out of data basis
+    min = np.minimum(np.min(train[0:train_size], 0), np.min(test[0:test_size], 0))
+    max = np.maximum(np.max(train[0:train_size], 0), np.max(test[0:test_size], 0))
+
+    # Print additional information if desired
+    cfg = get_config()
+    print_stats = json.loads(cfg.get('classification', 'print_norm_stats'))
+
+    if print_stats == "True":
+
+        print "\n"
+        print "Normalization Percentage: " + str(normalization)
+        print "\n"
+        print "Minima Feature Values: " + str(min)
+        print "Maxima Feature Values: " + str(max)
+        print "\n"
+
+    return min, max
 
 
 def get_correlation(X, y):
@@ -420,6 +491,17 @@ def get_name_metric(settings):
     name_metric = settings.perf_metrics_keys[1]
     assert(name_metric == 'mse' or name_metric == 'acc')
     return name_metric
+
+
+def get_filename_mf(settings):
+    if settings.optype == 'class':
+        param_str = '%s' % settings.alpha
+    split_str = 'mf-budg-%s_nmon-%s_mini-%s_discount-%s' % (settings.budget, settings.n_mondrians, \
+                                        settings.n_minibatches, settings.discount_factor)
+    filename = settings.op_dir + '/' + '%s-%s-param-%s-init_id-%s-bag-%s-tag-%s.p' % \
+            (settings.dataset, split_str, param_str, settings.init_id, \
+                settings.bagging, settings.tag)
+    return filename
 
 
 def load_toy_data():
@@ -842,6 +924,7 @@ def init_update_posterior_node_incremental(tree, data, param, settings, cache, n
 
 
 def update_posterior_node_incremental(tree, data, param, settings, cache, node_id, train_ids_new):
+    #train_ids_fixed = data['train_ids_partition']['current'][0]
     y_train_new = data['y_train'][train_ids_new]
     if settings.optype == 'class':
         tree.counts[node_id] += np.bincount(y_train_new, minlength=data['n_class'])

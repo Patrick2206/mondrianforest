@@ -9,15 +9,19 @@ import numpy as np
 import cPickle as pickle
 from sklearn.datasets import load_svmlight_file
 
+
 def get_x_y(filename, name):
     (x, y) = load_svmlight_file(filename)
     x = x.toarray()
     if name == 'pendigits-svm':
         x = x[:, 1:]
     y = y.astype('int')
-    if name != 'pendigits-svm':
+    if name != 'pendigits-svm' and (y == -1).any():  # Deal with binary classification in form of [-1,1]
+        y[y == -1] = 0
+    elif name != 'pendigits-svm' and not (y == 0).any():  # Decrease elements if list is not zero-based
         y -= 1
-    return (x, y)
+    return(x, y)
+
 
 name, filename_train, filename_test = sys.argv[1:4]
 
@@ -41,6 +45,7 @@ data['y_test'] = y
 
 data['n_dim'] = x.shape[1]
 data['n_class'] = len(np.unique(y))
+
 try:
     assert data['n_class'] == max(np.unique(y)) + 1
 except AssertionError:
@@ -49,6 +54,6 @@ except AssertionError:
 data['is_sparse'] = False
 
 print 'name = %10s, n_dim = %5d, n_class = %5d, n_train = %5d, n_test = %5d' \
-        % (name, data['n_dim'], data['n_class'], data['n_train'], data['n_test'])
+      % (name, data['n_dim'], data['n_class'], data['n_train'], data['n_test'])
 
 pickle.dump(data, open(name + '/' + name + ".p", "wb"), protocol=pickle.HIGHEST_PROTOCOL)

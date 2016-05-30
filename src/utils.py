@@ -164,14 +164,14 @@ def assert_no_nan(mat, name='matrix'):
 
 def check_if_one(val):
     try:
-        assert(np.abs(val - 1) < 1e-9)
+        assert(np.abs(val - 1) < 1e-12)
     except AssertionError:
         print 'val = %s (needs to be equal to 1)' % val
         raise AssertionError
 
 def check_if_zero(val):
     try:
-        assert(np.abs(val) < 1e-9)
+        assert(np.abs(val) < 1e-5)
     except AssertionError:
         print 'val = %s (needs to be equal to 0)' % val
         raise AssertionError
@@ -245,6 +245,7 @@ class empty(object):
 
 
 def sigmoid(x):
+    # Logistic Function
     op = 1.0 / (1 + np.exp(-x))
     return op
 

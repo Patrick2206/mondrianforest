@@ -162,6 +162,10 @@ class MondrianTree(object):
             self.sigmoid_coef = param.sigmoid_coef + 0 
             self.variance_coef = param.variance_coef + 0
 
+    def reset_tree(self):
+        for i_t, tree in enumerate(self.forest):
+            print "Reset Tree"
+
     def get_average_depth(self, settings, data):
         """
         compute average depth of tree (averaged over training data)
@@ -918,7 +922,7 @@ class MondrianTree(object):
                 # FIXME: node_id.sum_range_d tested here; perhaps move this to pause_mondrian?
                 unpause_paused_mondrian = unpause_paused_mondrian and (node_id.sum_range_d != 0)
                 if not self.pause_mondrian(node_id, settings):
-                    assert unpause_paused_mondrian
+                    #assert unpause_paused_mondrian
                     self.leaf_nodes.remove(node_id)
                     self.grow_nodes = [node_id]
                     self.grow(data, settings, param, cache)
@@ -931,11 +935,7 @@ class MondrianTree(object):
             init_update_posterior_node_incremental(self, data, param, settings, cache, new_block, \
                     train_ids_new, node_id)      # counts of outer block are initialized with counts of current block
             if node_id.is_leaf:
-                warn('\nWARNING: a leaf should not be expanded here; printing out some diagnostics')
-                print 'node_id = %s, is_leaf = %s, max_split_cost = %s, split_cost = %s' \
-                        % (node_id, node_id.is_leaf, self.max_split_costs[node_id], split_cost)
-                print 'counts = %s\nmin_d = \n%s\nmax_d = \n%s' % (self.counts[node_id], node_id.min_d, node_id.max_d)
-                raise Exception('a leaf should be expanded via grow call; see diagnostics above')
+                raise Exception('a leaf should be expanded via grow call ... not here')
             if settings.debug:
                 print 'looks like cut possible'
             # there is a cut outside the extent of the current block
